@@ -201,7 +201,8 @@ fun CanvasScreen(
 
                                     val newLine = firstPoint.listPoints + bodyLine + lastPoint
 
-                                    brushLine = brushLine.dropLast(1) + firstPoint.copy(listPoints = newLine)
+                                    brushLine =
+                                        brushLine.dropLast(1) + firstPoint.copy(listPoints = newLine)
 
                                 }
                             )
@@ -333,7 +334,7 @@ fun CanvasScreen(
 
         if (dialogStateSave) DialogBottom(
             onNegativeButtonClick = onCloseDialog,
-            onPositiveButtonClick = { saveImageToGallery()  },
+            onPositiveButtonClick = { saveImageToGallery() },
             textNegativeButton = "ПРОДОЛЖИТЬ РЕДАКТИРОВАНИЕ",
             textPositiveButton = "ПРИМЕНИТЬ ИЗМЕНЕНИЯ"
         ) else if (dialogStateBack) DialogBottom(
