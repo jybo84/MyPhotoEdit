@@ -72,6 +72,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.graphics.createBitmap
 import coil.compose.AsyncImage
 import java.io.IOException
+import android.graphics.Canvas
 
 @Preview
 @Composable
@@ -131,7 +132,7 @@ fun CanvasScreen(
 
     fun saveImageToGallery() {
         val bitmap = createBitmap(view.width, view.height)
-        val canvas = android.graphics.Canvas(bitmap)
+        val canvas = Canvas(bitmap)
         view.draw(canvas)
         combinedBitmap = bitmap
         saveBitmapToGallery(context, bitmap)
