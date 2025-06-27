@@ -1,10 +1,14 @@
 package com.example.myphotoedit
 
 import android.annotation.SuppressLint
+import android.content.ContentValues
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -59,12 +63,15 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.graphics.createBitmap
 import coil.compose.AsyncImage
+import java.io.IOException
 
 @Preview
 @Composable
@@ -118,6 +125,20 @@ fun CanvasScreen(
     val context = LocalContext.current
     var imageLoad by rememberSaveable { mutableStateOf<Bitmap?>(null) }
 
+    var combinedBitmap by remember { mutableStateOf<Bitmap?>(null) }
+
+    val view = LocalView.current
+
+    fun saveImageToGallery() {
+        val bitmap = createBitmap(view.width, view.height)
+        val canvas = android.graphics.Canvas(bitmap)
+        view.draw(canvas)
+        combinedBitmap = bitmap
+        saveBitmapToGallery(context, bitmap)
+        onCloseDialog()
+    }
+
+
     val imageLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent(),
         onResult = { uri: Uri? ->
@@ -125,7 +146,6 @@ fun CanvasScreen(
                 val inputStream = context.contentResolver.openInputStream(uri)
                 inputStream?.use { stream ->
                     imageLoad = BitmapFactory.decodeStream(stream)
-
                 }
             }
         }
@@ -312,7 +332,7 @@ fun CanvasScreen(
 
         if (dialogStateSave) DialogBottom(
             onNegativeButtonClick = onCloseDialog,
-            onPositiveButtonClick = { myToast(context) },
+            onPositiveButtonClick = { saveImageToGallery()  },
             textNegativeButton = "ПРОДОЛЖИТЬ РЕДАКТИРОВАНИЕ",
             textPositiveButton = "ПРИМЕНИТЬ ИЗМЕНЕНИЯ"
         ) else if (dialogStateBack) DialogBottom(
@@ -423,6 +443,36 @@ fun ButtonOnToolBar(
     }
 }
 
-fun myToast(context: Context){
-    Toast.makeText(context, "Логика не реализована", Toast.LENGTH_LONG).show()
+fun saveBitmapToGallery(context: Context, bitmap: Bitmap) {
+    val contentValues = ContentValues().apply {
+        put(MediaStore.Images.Media.DISPLAY_NAME, "image_${System.currentTimeMillis()}.jpg")
+        put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES)
+            put(MediaStore.Images.Media.IS_PENDING, 1)
+        }
+    }
+
+    val uri = context.contentResolver.insert(
+        MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+        contentValues
+    ) ?: return
+
+    try {
+        context.contentResolver.openOutputStream(uri)?.use { outputStream ->
+            if (!bitmap.compress(Bitmap.CompressFormat.JPEG, 90, outputStream)) {
+                throw IOException("Не удалось сохранить изображение")
+            }
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            contentValues.put(MediaStore.Images.Media.IS_PENDING, 0)
+            context.contentResolver.update(uri, contentValues, null, null)
+        }
+
+        Toast.makeText(context, "Изображение сохранено", Toast.LENGTH_SHORT).show()
+    } catch (e: Exception) {
+        context.contentResolver.delete(uri, null, null)
+        Toast.makeText(context, "Ошибка при сохранении: ${e.message}", Toast.LENGTH_SHORT).show()
+    }
 }
