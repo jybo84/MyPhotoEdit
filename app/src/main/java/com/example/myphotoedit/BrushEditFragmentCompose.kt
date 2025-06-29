@@ -73,6 +73,9 @@ import androidx.core.graphics.createBitmap
 import coil.compose.AsyncImage
 import java.io.IOException
 import android.graphics.Canvas
+import android.graphics.Paint
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.toArgb
 
 @Preview
 @Composable
@@ -125,20 +128,44 @@ fun CanvasScreen(
 ) {
     val context = LocalContext.current
     var imageLoad by rememberSaveable { mutableStateOf<Bitmap?>(null) }
-
-    var combinedBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var brushLine by rememberSaveable { mutableStateOf<List<Line>>(listOf()) }
 
     val view = LocalView.current
 
     fun saveImageToGallery() {
-        val bitmap = createBitmap(view.width, view.height)
+        if (imageLoad == null) return
+        val bitmap = createBitmap(imageLoad!!.width, imageLoad!!.height)
         val canvas = Canvas(bitmap)
-        view.draw(canvas)
-        combinedBitmap = bitmap
+        canvas.drawBitmap(imageLoad!!, 0f, 0f, null)
+
+        val scaleX = imageLoad!!.width.toFloat() / view.width.toFloat()
+        val scaleY = imageLoad!!.height.toFloat() / view.height.toFloat()
+
+        brushLine.forEach { line ->
+            val path = android.graphics.Path()
+            line.listPoints.forEachIndexed { index, point ->
+                val scaledPoint = Offset(point.x * scaleX, point.y * scaleY)
+                if (index == 0 && line.isFirstPoint) {
+                    path.moveTo(scaledPoint.x, scaledPoint.y)
+                } else {
+                    path.lineTo(scaledPoint.x, scaledPoint.y)
+                }
+            }
+
+            val paint = Paint().apply {
+
+                color = line.color.toArgb()
+                strokeWidth = line.width * scaleX
+                style = android.graphics.Paint.Style.STROKE
+                isAntiAlias = true
+            }
+
+            canvas.drawPath(path, paint)
+        }
+
         saveBitmapToGallery(context, bitmap)
         onCloseDialog()
     }
-
 
     val imageLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent(),
@@ -161,7 +188,7 @@ fun CanvasScreen(
             .fillMaxSize()
             .background(Color.White)
     ) {
-        var brushLine by rememberSaveable { mutableStateOf<List<Line>>(listOf()) }
+
         var brushWightState by rememberSaveable { mutableStateOf(10f) }
         var drawingMode by rememberSaveable { mutableStateOf<DrawingMode>(DrawingMode.Brush) }
         var hue by remember { mutableStateOf(0f) }
@@ -178,49 +205,60 @@ fun CanvasScreen(
                 Canvas(
                     modifier = Modifier
                         .fillMaxSize()
-                        .fillMaxSize()
                         .background(Color.Transparent)
-                        .pointerInput(Unit) {
+                        .pointerInput(drawingMode, brushWightState) {
                             detectDragGestures(
-                                onDragStart = { it: Offset ->
-                                    brushLine = brushLine + Line(
-                                        listPoints = listOf(it),
-                                        isFirstPoint = true,
-
-                                        color = if (drawingMode == DrawingMode.Brush)
-                                            Color.hsl(hue, 1f, 0.5f)
-                                        else Color.Transparent,
-                                        width = brushWightState
-                                    )
+                                onDragStart = { offset ->
+                                    if (drawingMode == DrawingMode.Eraser) {
+                                        brushLine = eraseLinesAtPoint(brushLine, offset, brushWightState)
+                                    } else {
+                                        brushLine = brushLine + Line(
+                                            listPoints = listOf(offset),
+                                            isFirstPoint = true,
+                                            color = Color.hsl(hue, 1f, 0.5f),
+                                            width = brushWightState
+                                        )
+                                    }
                                 },
-
-                                onDrag = { change, dragAmount ->
-                                    val firstPoint = brushLine.last()
-                                    val bodyLine = change.historical.map { it.position }
-                                    val lastPoint = change.position
-
-                                    val newLine = firstPoint.listPoints + bodyLine + lastPoint
-
-                                    brushLine =
-                                        brushLine.dropLast(1) + firstPoint.copy(listPoints = newLine)
-
+                                onDrag = { change, _ ->
+                                    if (drawingMode == DrawingMode.Eraser) {
+                                        // Обрабатываем все точки жеста для ластика
+                                        val allPoints = change.historical.map { it.position } + change.position
+                                        var currentLines = brushLine
+                                        allPoints.forEach { point ->
+                                            currentLines = eraseLinesAtPoint(currentLines, point, brushWightState)
+                                        }
+                                        brushLine = currentLines
+                                    } else {
+                                        // Обычный режим рисования
+                                        val lastLine = brushLine.lastOrNull()
+                                        if (lastLine != null) {
+                                            val newPoints = lastLine.listPoints +
+                                                    change.historical.map { it.position } +
+                                                    change.position
+                                            brushLine = brushLine.dropLast(1) +
+                                                    lastLine.copy(listPoints = newPoints)
+                                        }
+                                    }
                                 }
                             )
                         }
                 ) {
-                    brushLine.forEach { line: Line ->
-
-                        val path = Path()
-                        line.listPoints.forEachIndexed { index, point ->
-                            if (index == 0 && line.isFirstPoint) {
-                                path.moveTo(point.x, point.y)
-                            } else
-                                path.lineTo(point.x, point.y)
+                    // Отрисовка линий
+                    brushLine.forEach { line ->
+                        val path = androidx.compose.ui.graphics.Path().apply {
+                            line.listPoints.forEachIndexed { index, point ->
+                                if (index == 0 && line.isFirstPoint) {
+                                    moveTo(point.x, point.y)
+                                } else {
+                                    lineTo(point.x, point.y)
+                                }
+                            }
                         }
                         drawPath(
+                            path = path,
                             color = line.color,
-                            style = Stroke(line.width),
-                            path = path
+                            style = Stroke(line.width)
                         )
                     }
                 }
@@ -476,5 +514,49 @@ fun saveBitmapToGallery(context: Context, bitmap: Bitmap) {
     } catch (e: Exception) {
         context.contentResolver.delete(uri, null, null)
         Toast.makeText(context, "Ошибка при сохранении: ${e.message}", Toast.LENGTH_SHORT).show()
+    }
+}
+
+private fun eraseLinesAtPoint(lines: List<Line>, point: Offset, eraserWidth: Float): List<Line> {
+    val eraserRadius = eraserWidth / 2
+    val eraserRect = Rect(
+        left = point.x - eraserRadius,
+        top = point.y - eraserRadius,
+        right = point.x + eraserRadius,
+        bottom = point.y + eraserRadius
+    )
+
+    return lines.flatMap { line ->
+        // Разбиваем линию на сегменты, которые не пересекаются с ластиком
+        val segments = mutableListOf<MutableList<Offset>>()
+        var currentSegment = mutableListOf<Offset>()
+
+        line.listPoints.forEachIndexed { index, linePoint ->
+            if (!eraserRect.contains(linePoint)) {
+                currentSegment.add(linePoint)
+            } else {
+                if (currentSegment.isNotEmpty()) {
+                    segments.add(currentSegment)
+                    currentSegment = mutableListOf()
+                }
+            }
+
+            // Добавляем последний сегмент
+            if (index == line.listPoints.lastIndex && currentSegment.isNotEmpty()) {
+                segments.add(currentSegment)
+            }
+        }
+
+        // Создаем новые линии из оставшихся сегментов
+        segments.map { segment ->
+            if (segment.size >= 2) {
+                line.copy(
+                    listPoints = segment,
+                    isFirstPoint = segment.first() == line.listPoints.first()
+                )
+            } else {
+                null
+            }
+        }.filterNotNull()
     }
 }
